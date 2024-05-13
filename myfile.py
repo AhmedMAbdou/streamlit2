@@ -1,8 +1,8 @@
 import streamlit as st
-from streamlit_webrtc import webrtc_streamer, VideoTransformerBase
+import cv2
 import numpy as np
 import tensorflow as tf
-from PIL import Image, ImageDraw, ImageFont
+import time
 
 # Function to load TensorFlow Lite model
 @st.cache(allow_output_mutation=True)
@@ -22,8 +22,8 @@ def load_labels(labels_path):
 
 # Function to preprocess frame data and resize it
 def preprocess_frame(frame, target_size=(224, 224)):
-    resized_frame = tf.image.resize(frame, target_size)
-    processed_frame = resized_frame.numpy().astype(np.float32) / 255.0
+    resized_frame = cv2.resize(frame, target_size)
+    processed_frame = resized_frame.astype(np.float32) / 255.0
     return processed_frame
 
 # Function to perform object detection
@@ -33,13 +33,8 @@ def detect_objects(interpreter, input_details, output_details, frame):
     output = interpreter.get_tensor(output_details[0]['index'])
     return output
 
-# Function to add text to the frame
-def add_text_to_frame(frame, text):
-    pil_image = Image.fromarray(frame)
-    draw = ImageDraw.Draw(pil_image)
-    font = ImageFont.truetype("arial.ttf", 36)
-    draw.text((10, 30), text, font=font, fill=(0, 255, 0))
-    return np.array(pil_image)
+# Create the Streamlit app
+st.title('Object Detection App')
 
 # Load the TensorFlow Lite model
 model_path = "models/mobilenet_v1_1.0_224.tflite"
@@ -49,21 +44,49 @@ interpreter, input_details, output_details = load_model(model_path)
 labels_path = "models/mobilenet_v1_1.0_224.txt"
 labels = load_labels(labels_path)
 
-# Define a video transformer class for object detection
-class ObjectDetectionTransformer(VideoTransformerBase):
-    def __init__(self):
-        super().__init__()
+# Add a placeholder for displaying the video
+video_placeholder = st.empty()
 
-    def transform(self, frame):
-        processed_frame = preprocess_frame(frame)
-        output = detect_objects(interpreter, input_details, output_details, processed_frame)
-        detected_label = labels[np.argmax(output)]
-        confidence = np.max(output)
-        annotated_frame = add_text_to_frame(frame, f"{detected_label}   {confidence:.2f}")
-        return annotated_frame
+# Add a button to start and stop the camera feed
+start_stop_button = st.button("Open Camera")
 
-# Create the Streamlit app
-st.title('Object Detection App')
+# Open camera video feed when the button is clicked
+if start_stop_button:
+    cap = cv2.VideoCapture(0)
 
-# Display the webcam feed and perform object detection
-webrtc_streamer(key="example", video_transformer_factory=ObjectDetectionTransformer)
+    # Check if camera opened successfully
+    if not cap.isOpened():
+        st.error("Error: Unable to open camera.")
+    else:
+        while True:
+            # Read frame from camera
+            ret, frame = cap.read()
+
+            if not ret:
+                break
+
+            # Preprocess the frame
+            processed_frame = preprocess_frame(frame)
+
+            # Perform object detection on the frame
+            output = detect_objects(interpreter, input_details, output_details, processed_frame)
+
+            # Extract detected object label and confidence score
+            detected_label = labels[np.argmax(output)]
+            confidence = np.max(output)
+
+            # Draw the detected label and confidence score on the frame
+            text = f"{detected_label}   {confidence:.2f}"
+            frame = cv2.putText(frame, text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+
+            # Convert frame from BGR to RGB
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+            # Update HTML video element
+            video_placeholder.image(frame_rgb, channels="RGB", use_column_width=True)
+
+            # Introduce a delay to control frame rate
+            time.sleep(.1)  # Adjust the delay time to 0.3 seconds
+
+        # Release the camera
+        cap.release()
